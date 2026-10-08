@@ -15,6 +15,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# psycopg is an extra, and rotator/database.py imports it inside the methods,
+# so the package installs and the whole suite runs without a compiler.
+postgres = ["psycopg[binary]>=3.2.0"]
 dev = ["moto[iam,secretsmanager]==5.2.3", "pytest==9.1.1", "ruff==0.16.10"]
 
 [tool.setuptools]
