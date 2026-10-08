@@ -126,3 +126,23 @@ class FakeVaultTransport:
             self.writes += 1
             return {"data": {"version": self.versions[key]}}
         raise AssertionError(f"unexpected method {method}")
+
+
+class RecordingStore:
+    """Wraps a store and records which methods were called, for the tests that
+    care about what was not called."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.calls: list[str] = []
+
+    def __getattr__(self, name: str) -> Any:
+        attribute = getattr(self._inner, name)
+        if not callable(attribute):
+            return attribute
+
+        def recorded(*args: Any, **kwargs: Any) -> Any:
+            self.calls.append(name)
+            return attribute(*args, **kwargs)
+
+        return recorded

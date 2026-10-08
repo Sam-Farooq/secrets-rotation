@@ -26,6 +26,7 @@ after a promote there is not one.
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -201,3 +202,90 @@ class Rotation:
             history=tuple(self._machine.history),
             **kwargs,  # type: ignore[arg-type]
         )
+
+
+@dataclass(frozen=True)
+class PlanRow:
+    """What `rotator plan` says about one target, having changed nothing."""
+
+    target: str
+    key: str
+    current_username: str | None
+    next_username: str | None
+    age_days: float | None
+    max_age_days: int
+    blockers: tuple[str, ...] = ()
+
+    @property
+    def due(self) -> bool:
+        if self.blockers:
+            return False
+        return self.age_days is not None and self.age_days >= self.max_age_days
+
+    @property
+    def verdict(self) -> str:
+        if self.blockers:
+            return "blocked"
+        return "due" if self.due else "ok"
+
+
+def plan(target: Target, store: SecretStore, now: dt.datetime) -> PlanRow:
+    """Report what a rotation would do. Reads only.
+
+    Every branch that could call a write returns a blocker instead, and
+    tests/test_plan_is_read_only.py checks the claim against the operations
+    botocore actually sent.
+    """
+    key = target.key
+    blockers: list[str] = []
+    current_username: str | None = None
+    next_username: str | None = None
+    age_days: float | None = None
+
+    try:
+        live = store.current(key)
+    except RotatorError as exc:
+        return PlanRow(
+            target=target.name,
+            key=key,
+            current_username=None,
+            next_username=None,
+            age_days=None,
+            max_age_days=target.max_age_days,
+            blockers=(str(exc),),
+        )
+
+    if live is None:
+        blockers.append("no current credential")
+    else:
+        current_username = live.username
+        try:
+            next_username = target.other_user(live.username)
+        except RotatorError as exc:
+            blockers.append(str(exc))
+
+    try:
+        if store.staged(key) is not None:
+            blockers.append("a staged credential is already there, from a run that stopped")
+    except RotatorError as exc:
+        blockers.append(str(exc))
+
+    try:
+        age = store.current_age(key, now)
+    except RotatorError as exc:
+        blockers.append(str(exc))
+    else:
+        if age is None:
+            blockers.append("the age of the current credential is unknown")
+        else:
+            age_days = round(age.total_seconds() / 86400, 2)
+
+    return PlanRow(
+        target=target.name,
+        key=key,
+        current_username=current_username,
+        next_username=next_username,
+        age_days=age_days,
+        max_age_days=target.max_age_days,
+        blockers=tuple(blockers),
+    )
