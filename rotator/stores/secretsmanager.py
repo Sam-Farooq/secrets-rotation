@@ -79,8 +79,19 @@ class SecretsManagerStore:
         return self._value(self._check(secret_id), CURRENT)
 
     def staged(self, secret_id: str) -> Credential | None:
-        """The pending credential, if a run left one behind."""
-        return self._value(self._check(secret_id), PENDING)
+        """The pending credential, if a run left one behind.
+
+        A version can carry both labels for a moment, and `promote` closes that
+        window by removing AWSPENDING itself. This guard is the second half of
+        that fix: a pending label sitting on the version that is already current
+        is not a half finished rotation, and reporting it as one would block
+        every subsequent run on the target.
+        """
+        secret_id = self._check(secret_id)
+        for labels in self._stages(secret_id).values():
+            if PENDING in labels and CURRENT not in labels:
+                return self._value(secret_id, PENDING)
+        return None
 
     def current_age(self, secret_id: str, now: dt.datetime) -> dt.timedelta | None:
         """How long the live credential has been live.
@@ -135,12 +146,13 @@ class SecretsManagerStore:
         return str(response["VersionId"])
 
     def promote(self, secret_id: str) -> None:
-        """Move AWSCURRENT onto the pending version.
+        """Move AWSCURRENT onto the pending version, then drop AWSPENDING.
 
-        One call, and the server makes it atomic, so there is no window in
-        which a consumer can read half a rotation. The old current version
-        picks up AWSPREVIOUS on the way through, which is a rollback target
-        right up to the moment revoke runs.
+        The second call is not decoration. Moving AWSCURRENT leaves AWSPENDING
+        where it was, so after a successful rotation the target still looks like
+        it has a half finished one, and the next run refuses to start. The old
+        current version picks up AWSPREVIOUS on the way through, which is a
+        rollback target right up to the moment revoke runs.
         """
         secret_id = self._check(secret_id)
         stages = self._stages(secret_id)
@@ -149,13 +161,16 @@ class SecretsManagerStore:
         if pending is None:
             raise StoreError(f"{secret_id}: nothing is staged, so there is nothing to promote")
         if pending == live:
-            return
+            return  # already promoted; the label removal below is all that is left
         try:
             self._client.update_secret_version_stage(
                 SecretId=secret_id,
                 VersionStage=CURRENT,
                 MoveToVersionId=pending,
                 RemoveFromVersionId=live,
+            )
+            self._client.update_secret_version_stage(
+                SecretId=secret_id, VersionStage=PENDING, RemoveFromVersionId=pending
             )
         except Exception as exc:
             raise StoreError(f"promote({secret_id}) failed: {exc}") from exc

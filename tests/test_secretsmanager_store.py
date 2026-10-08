@@ -42,11 +42,21 @@ def test_staging_is_invisible_to_consumers(store, secretsmanager, seeded_secret)
     assert store.current(seeded_secret).username == "orders_app_a"
 
 
-def test_promote_puts_the_new_credential_in_front_of_consumers(store, seeded_secret):
+def test_promote_swaps_current_and_removes_the_pending_label(store, secretsmanager, seeded_secret):
+    """The fix that made promote two calls.
+
+    UpdateSecretVersionStage moves AWSCURRENT and leaves AWSPENDING attached to
+    the same version, so the first version of this reported every finished
+    rotation as half finished.
+    """
     store.stage(seeded_secret, NEW)
     store.promote(seeded_secret)
 
+    stages = secretsmanager.describe_secret(SecretId=seeded_secret)["VersionIdsToStages"]
+    labels = {label for entry in stages.values() for label in entry}
+    assert "AWSPENDING" not in labels
     assert store.current(seeded_secret) == NEW
+    assert store.staged(seeded_secret) is None
 
 
 def test_the_replaced_version_becomes_awsprevious(store, secretsmanager, seeded_secret):
@@ -61,6 +71,22 @@ def test_the_replaced_version_becomes_awsprevious(store, secretsmanager, seeded_
         ]
     )
     assert previous["username"] == "orders_app_a"
+
+
+def test_promote_twice_refuses_rather_than_promoting_nothing(store, seeded_secret):
+    """The one step in the sequence that is not repeatable.
+
+    Every step before it overwrites or reads. This one has nothing to move the
+    second time, and succeeding at nothing would make a resumed run believe it
+    had published a credential it had not.
+    """
+    store.stage(seeded_secret, NEW)
+    store.promote(seeded_secret)
+
+    with pytest.raises(StoreError, match="nothing is staged"):
+        store.promote(seeded_secret)
+
+    assert store.current(seeded_secret) == NEW
 
 
 def test_promote_with_nothing_staged_says_so(store, seeded_secret):
@@ -139,3 +165,25 @@ def test_a_missing_secret_reads_as_absent_rather_than_raising(store):
     assert store.current("prod/orders/app") is None
     assert store.staged("prod/orders/app") is None
     assert store.current_age("prod/orders/app", dt.datetime.now(dt.UTC)) is None
+
+
+def test_a_pending_label_on_the_current_version_is_not_a_half_finished_run(
+    store, secretsmanager, seeded_secret
+):
+    """The second half of the promote fix.
+
+    If AWSPENDING ever ends up on the version that is also AWSCURRENT, that is
+    a finished rotation, not an interrupted one, and reporting it as staged
+    would block the target forever.
+    """
+    described = secretsmanager.describe_secret(SecretId=seeded_secret)
+    current = next(
+        version
+        for version, labels in described["VersionIdsToStages"].items()
+        if "AWSCURRENT" in labels
+    )
+    secretsmanager.update_secret_version_stage(
+        SecretId=seeded_secret, VersionStage="AWSPENDING", MoveToVersionId=current
+    )
+
+    assert store.staged(seeded_secret) is None
