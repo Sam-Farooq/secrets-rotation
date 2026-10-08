@@ -20,6 +20,9 @@ dependencies = [
 postgres = ["psycopg[binary]>=3.2.0"]
 dev = ["moto[iam,secretsmanager]==5.2.3", "pytest==9.1.1", "ruff==0.16.10"]
 
+[project.scripts]
+rotator = "rotator.cli:main"
+
 [tool.setuptools]
 packages = ["rotator", "rotator.stores"]
 
