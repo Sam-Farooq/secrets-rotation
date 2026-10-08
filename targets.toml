@@ -1,0 +1,49 @@
+# What gets rotated. scripts/render.py turns this into the two files Terraform
+# reads, so adding a target here is the whole change: the schedule and the IAM
+# policy follow.
+#
+# account_id is the number from the AWS documentation examples. There is no real
+# account behind anything in this file.
+
+[aws]
+account_id = "111122223333"
+region = "eu-west-1"
+kms_key_arn = "arn:aws:kms:eu-west-1:111122223333:key/00000000-0000-0000-0000-000000000000"
+
+[defaults]
+# The longest a consumer is allowed to hold a credential before reading the
+# store again. Every quiesce window below has to outlast it, and config.load
+# refuses the file if one does not.
+consumer_cache_seconds = 300
+quiesce_seconds = 900
+verify_attempts = 3
+verify_delay_seconds = 5
+max_age_days = 30
+password_length = 40
+
+[[target]]
+name = "orders-db"
+store = "secretsmanager"
+secret_id = "prod/orders/app"
+users = ["orders_app_a", "orders_app_b"]
+schedule = "cron(15 3 ? * SUN *)"
+
+[[target]]
+name = "reporting-db"
+store = "secretsmanager"
+secret_id = "prod/reporting/app"
+users = ["reporting_app_a", "reporting_app_b"]
+schedule = "rate(14 days)"
+max_age_days = 14
+# Reporting workers hold a connection for the length of a batch, so the window
+# is the batch timeout and not the cache TTL.
+quiesce_seconds = 3600
+
+[[target]]
+name = "analytics-db"
+store = "vault"
+vault_mount = "kv"
+vault_path = "analytics/app"
+users = ["analytics_app_a", "analytics_app_b"]
+schedule = "cron(0 4 1 * ? *)"
+max_age_days = 45
