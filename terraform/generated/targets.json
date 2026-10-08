@@ -1,0 +1,23 @@
+{
+  "analytics-db": {
+    "key": "kv/analytics/app",
+    "max_age_days": 45,
+    "quiesce_seconds": 900,
+    "schedule": "cron(0 4 1 * ? *)",
+    "store": "vault"
+  },
+  "orders-db": {
+    "key": "prod/orders/app",
+    "max_age_days": 30,
+    "quiesce_seconds": 900,
+    "schedule": "cron(15 3 ? * SUN *)",
+    "store": "secretsmanager"
+  },
+  "reporting-db": {
+    "key": "prod/reporting/app",
+    "max_age_days": 14,
+    "quiesce_seconds": 3600,
+    "schedule": "rate(14 days)",
+    "store": "secretsmanager"
+  }
+}
