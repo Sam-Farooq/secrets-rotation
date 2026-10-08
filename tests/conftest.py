@@ -7,6 +7,7 @@ without one raises NoRegionError from inside a test that looks unrelated.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -68,3 +69,30 @@ def config(config_file: Path) -> Any:
     from rotator.config import load
 
     return load(config_file)
+
+
+@pytest.fixture
+def aws() -> Any:
+    """A mocked AWS account for the duration of one test."""
+    from moto import mock_aws
+
+    with mock_aws():
+        yield
+
+
+@pytest.fixture
+def secretsmanager(aws: None) -> Any:
+    import boto3
+
+    return boto3.client("secretsmanager", region_name="eu-west-1")
+
+
+@pytest.fixture
+def seeded_secret(secretsmanager: Any) -> str:
+    """A secret with one current version, as it would be after Terraform
+    created it and before anything rotated it."""
+    secretsmanager.create_secret(
+        Name="prod/orders/app",
+        SecretString=json.dumps({"username": "orders_app_a", "password": "the-old-one"}),
+    )
+    return "prod/orders/app"
