@@ -1,0 +1,29 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
+
+# audit trail written by `rotator rotate`
+*.audit.jsonl
+audit/
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+tfplan
+crash.log
+
+# .terraform.lock.hcl is committed on purpose, and is NOT ignored. It is
+# generated with -platform=linux_amd64 as well as darwin_arm64: a lock file
+# written on a Mac holds hashes for darwin only, and `terraform init` in CI
+# then fails with "the current package checksums do not match", which reads
+# like a supply chain problem and is a missing platform.
+#
+#   terraform providers lock -platform=linux_amd64 -platform=darwin_arm64

@@ -1,0 +1,7 @@
+"""Credential rotation that will not revoke anything it has not replaced."""
+
+from __future__ import annotations
+
+__version__ = "0.11.0"
+
+__all__ = ["__version__"]

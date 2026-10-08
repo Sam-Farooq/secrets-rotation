@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "secrets-rotation"
+# Pre-1.0 and staying there until this has rotated something real. The state
+# machine and the CLI contract are settled; the Postgres adapter has never run
+# against a live server and the Vault store has never spoken to a Vault.
+version = "0.11.0"
+description = "Two phase credential rotation: verify the replacement, then revoke"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.35.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "ruff==0.16.10"]
+
+[tool.setuptools]
+packages = ["rotator", "rotator.stores"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# tests/fakes.py is imported by name rather than as a package, because it is
+# fixtures for the suite and not part of the shipped tree.
+pythonpath = ["tests"]
+addopts = "--strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# The fixtures import boto3 and moto inside the functions on purpose, so the
+# AWS environment variables in conftest.py are set before botocore reads them.
+"tests/*" = ["E402"]
