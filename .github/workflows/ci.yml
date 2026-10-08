@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev]"
+
+      - run: ruff check .
+
+      - run: ruff format --check .
+
+      # targets.toml is the single source of truth for the schedules and the
+      # IAM policy. A target added without re-running this gets a schedule
+      # from nowhere and no permission to touch its secret.
+      - name: generated files are current
+        run: python scripts/render.py --check
+
+      # No AWS account, no Vault, no database, no network. moto stubs Secrets
+      # Manager and IAM; Vault, Postgres and the clock are replaced by
+      # tests/fakes.py. The credentials below are the strings moto expects, so
+      # a test that reached real AWS would fail on them rather than succeed
+      # quietly.
+      - name: pytest
+        env:
+          AWS_DEFAULT_REGION: eu-west-1
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+          AWS_SESSION_TOKEN: testing
+        run: pytest -q --tb=short
+
+      # The package has to import without the postgres extra, because that is
+      # how it is installed everywhere except the task that rotates.
+      - name: psycopg is optional
+        run: python -c "import rotator.database; print(rotator.database.PostgresAdmin)"
+
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.4
+
+      - run: terraform fmt -check -recursive
+
+      # -backend=false, so this needs no state bucket, takes no lock and uses
+      # no credentials. It downloads the provider, which is the only network
+      # this job touches.
+      - run: terraform init -backend=false -input=false
+
+      - run: terraform validate
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.54.0
+
+      - run: tflint --recursive
