@@ -37,7 +37,7 @@ def test_the_inactive_user_is_the_one_that_changes(config, secretsmanager, seede
 
 
 def test_consumers_read_the_new_credential_and_it_works(config, secretsmanager, seeded_secret):
-    database = FakeDatabase({"orders_app_a": "the-old-one"})
+    database = FakeDatabase({"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"})
 
     rotation(config, secretsmanager, database, FakeClock()).run()
 
@@ -53,7 +53,7 @@ def test_consumers_read_the_new_credential_and_it_works(config, secretsmanager, 
 
 
 def test_the_order_is_verify_then_promote_then_revoke(config, secretsmanager, seeded_secret):
-    database = FakeDatabase({"orders_app_a": "the-old-one"})
+    database = FakeDatabase({"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"})
     audit = MemoryAudit()
 
     outcome = rotation(config, secretsmanager, database, FakeClock(), audit).run()
@@ -74,7 +74,7 @@ def test_the_order_is_verify_then_promote_then_revoke(config, secretsmanager, se
 
 def test_the_quiesce_window_is_actually_waited_for(config, secretsmanager, seeded_secret):
     clock = FakeClock()
-    database = FakeDatabase({"orders_app_a": "the-old-one"})
+    database = FakeDatabase({"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"})
 
     rotation(config, secretsmanager, database, clock).run()
 
@@ -89,7 +89,7 @@ def test_nothing_is_staged_once_it_is_over(config, secretsmanager, seeded_secret
     a clean rotation the target still looked half finished and the next run
     refused to start.
     """
-    database = FakeDatabase({"orders_app_a": "the-old-one"})
+    database = FakeDatabase({"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"})
     store = SecretsManagerStore(secretsmanager, allowed_secret_ids=config.secret_ids)
 
     Rotation(
@@ -105,7 +105,7 @@ def test_nothing_is_staged_once_it_is_over(config, secretsmanager, seeded_secret
 
 
 def test_a_second_rotation_goes_back_to_the_first_user(config, secretsmanager, seeded_secret):
-    database = FakeDatabase({"orders_app_a": "the-old-one"})
+    database = FakeDatabase({"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"})
 
     first = rotation(config, secretsmanager, database, FakeClock()).run()
     second = rotation(config, secretsmanager, database, FakeClock()).run()
@@ -120,7 +120,9 @@ def test_a_verify_that_fails_twice_and_then_passes_still_rotates(
 ):
     """A verify routed to a read replica can fail before the ALTER ROLE has
     arrived there, so the attempt count is not decoration."""
-    database = FakeDatabase({"orders_app_a": "the-old-one"}, transient=2)
+    database = FakeDatabase(
+        {"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"}, transient=2
+    )
     clock = FakeClock()
 
     outcome = rotation(config, secretsmanager, database, clock).run()

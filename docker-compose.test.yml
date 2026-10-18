@@ -1,0 +1,28 @@
+# A Postgres for the live test tier, for anyone without one already.
+#
+#   docker compose -f docker-compose.test.yml up -d
+#   ROTATOR_TEST_DSN=postgresql://postgres:rotator-local@localhost:55432/rotator_contract \
+#     pytest -m live
+#
+# Port 55432, not 5432, so this never collides with a Postgres already on the
+# machine. The password is in this file on purpose: it is a throwaway server
+# for a test suite and a prompt would stop CI.
+#
+# scram-sha-256 is forced. Under the default `trust` every assertion about a
+# wrong password being refused passes without checking anything, which is the
+# one failure mode this tier exists to avoid.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: rotator-local
+      POSTGRES_DB: rotator_contract
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

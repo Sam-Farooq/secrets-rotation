@@ -236,10 +236,13 @@ Checking `log_statement` is still step seven of
 [`stopped-after-promote.md`](docs/runbooks/stopped-after-promote.md), because
 a server that logged plaintext before this change still has it in the log.
 
-Separately, `rotator/database.py` has never run against a live Postgres, and
-`rotator/stores/vault.py` has never spoken to a Vault. Both sit behind
-`Protocol`s in `rotator/ports.py` and both are exercised against hand written
-fakes. The version number is pre-1.0 for that reason.
+Separately, `rotator/stores/vault.py` has never spoken to a Vault. It sits
+behind a `Protocol` in `rotator/ports.py` and is exercised against a hand
+written fake. The version number is pre-1.0 for that reason.
+
+`rotator/database.py` was in the same position until 0.14.0 and is not any
+more: it runs against a real Postgres 16 in CI on every pull request, through
+the live tier described under Tests. Vault is the half that is left.
 
 ## Tests
 
@@ -252,10 +255,43 @@ python3.11 -m venv .venv
 .venv/bin/python scripts/render.py --check
 ```
 
-114 tests, no AWS account, no Vault, no database, no network, no compiler.
+156 tests, no AWS account, no Vault, no database, no network, no compiler.
 moto stubs Secrets Manager and IAM. Vault, Postgres and the clock are replaced
 by `tests/fakes.py`, which is hand written: nothing in this repo was captured
 or recorded from a running system.
+
+### The live tier, and what it caught
+
+A fake is only worth what it is faithful to, so
+[`tests/test_database_admin_contract.py`](tests/test_database_admin_contract.py)
+runs one set of tests twice, against `FakeDatabase` and against a real server,
+and both have to agree. It is marked `live` and deselected by default, so the
+command above needs neither Docker nor a database:
+
+```bash
+docker compose -f docker-compose.test.yml up -d
+ROTATOR_TEST_DSN=postgresql://postgres:rotator-local@localhost:55432/rotator_contract \
+  .venv/bin/python -m pytest -m live -q
+```
+
+The first run disagreed twice, and both were the fake being kinder than the
+server: it accepted a role it had never heard of, and a role name with a
+semicolon in it. Twenty test sites were seeding one of the two roles and
+rotating onto the other, so the suite had been rotating against a server that
+could not exist. The fake now refuses both, and those tests seed the pair.
+
+[`tests/test_postgres_live.py`](tests/test_postgres_live.py) holds what only a
+server can answer. The one worth naming: Postgres is made to hash a plaintext
+password itself, and the verifier `rotator/scram.py` derives from the salt and
+iteration count it chose is compared to the one it stored. RFC 7677 proves the
+implementation is SCRAM; this proves it is the same SCRAM as the server that
+has to accept it.
+
+**A live run under `trust` tests nothing.** A pg_hba line of `trust` accepts
+any password, so every assertion about a wrong one being refused passes without
+checking anything. The helper reads `pg_hba_file_rules` and those tests skip
+with a reason rather than go green; CI sets `scram-sha-256` explicitly and
+fails the job if the server reports anything else.
 
 The clock is injected rather than patched, which is why a target with an hour
 long quiesce window costs nothing to test and the test can still assert the

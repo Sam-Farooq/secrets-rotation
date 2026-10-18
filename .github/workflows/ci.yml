@@ -50,6 +50,57 @@ jobs:
       - name: psycopg is optional
         run: python -c "import rotator.database; print(rotator.database.PostgresAdmin)"
 
+  # The adapter against a real server. The offline job above proves the tool
+  # agrees with tests/fakes.py; this one proves tests/fakes.py agrees with
+  # Postgres, which is the half a fake cannot do for itself.
+  #
+  # scram-sha-256 is set explicitly rather than relied on. The image defaults
+  # to it, but a password rotation tool whose tests pass under `trust` has
+  # tested nothing, and that failure is silent.
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: rotator-ci
+          POSTGRES_DB: rotator_contract
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+          POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev,postgres]"
+
+      # If this prints anything but scram-sha-256 the run is worthless, so it
+      # fails here rather than going green on skipped assertions.
+      - name: the server enforces scram
+        env:
+          PGPASSWORD: rotator-ci
+        run: |
+          method=$(psql -h localhost -U postgres -d rotator_contract -tAc \
+            "SELECT auth_method FROM pg_hba_file_rules WHERE type='host' AND error IS NULL LIMIT 1")
+          echo "pg_hba host auth_method: $method"
+          test "$method" = "scram-sha-256"
+
+      - name: the live tier
+        env:
+          ROTATOR_TEST_DSN: postgresql://postgres:rotator-ci@localhost:5432/rotator_contract
+        run: pytest -m live -q --tb=short -rs
+
   terraform:
     runs-on: ubuntu-latest
     defaults:

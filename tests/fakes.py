@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
+from rotator.config import IDENTIFIER
 from rotator.errors import ProviderError, StoreError
 from rotator.ports import Credential
 
@@ -37,6 +38,12 @@ class FakeDatabase:
     `reject` makes a role's verify fail whatever the password is, which is how
     the failure path is driven. `transient` makes the first N verifies fail and
     the rest pass, for the replica lag case.
+
+    Two refusals here exist because `test_database_admin_contract.py` ran the
+    same tests against this and against a real Postgres and they disagreed.
+    This object used to accept a role it had never heard of and a role name
+    with a semicolon in it, both silently, so every test that rotated against
+    it was asserting against a backend more permissive than the real one.
     """
 
     def __init__(
@@ -54,7 +61,16 @@ class FakeDatabase:
         self._reject = frozenset(reject)
         self._transient = transient
 
+    def _role(self, username: str) -> str:
+        # Same two refusals PostgresAdmin makes, in the same order.
+        if not IDENTIFIER.match(username):
+            raise ProviderError(f"{username!r} is not a role name this tool will act on")
+        if username not in self.passwords:
+            raise ProviderError(f"ALTER ROLE {username} failed: UndefinedObject")
+        return username
+
     def set_password(self, username: str, password: str) -> None:
+        self._role(username)
         self.calls.append(("set_password", username))
         if username in self._fail_set:
             raise ProviderError(f"ALTER ROLE {username} failed: PermissionDenied")
@@ -70,6 +86,7 @@ class FakeDatabase:
         return self.passwords.get(credential.username) == credential.password
 
     def revoke(self, username: str) -> None:
+        self._role(username)
         self.calls.append(("revoke", username))
         if username in self._fail_revoke:
             raise ProviderError(f"ALTER ROLE {username} failed: ObjectInUse")
