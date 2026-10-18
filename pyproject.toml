@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "secrets-rotation"
 # Pre-1.0 and staying there until this has rotated something real. The state
-# machine and the CLI contract are settled; the Postgres adapter has never run
-# against a live server and the Vault store has never spoken to a Vault.
-version = "0.14.0"
+# machine and the CLI contract are settled; both adapters now run against the
+# thing they adapt, Postgres 16 and Vault 2.1.2, in CI on every pull request.
+version = "0.15.0"
 description = "Two phase credential rotation: verify the replacement, then revoke"
 requires-python = ">=3.11"
 dependencies = [
@@ -31,11 +31,14 @@ testpaths = ["tests"]
 # tests/fakes.py is imported by name rather than as a package, because it is
 # fixtures for the suite and not part of the shipped tree.
 pythonpath = ["tests"]
-# The live tier is off unless asked for, so `pytest` needs no server and no
-# Docker. `pytest -m live` runs it, `pytest -m ""` runs both.
-addopts = "--strict-markers -m 'not live'"
+# The live tiers are off unless asked for, so `pytest` needs no server and no
+# Docker. `pytest -m live` and `pytest -m live_vault` run them, `pytest -m ""`
+# runs everything. Two markers rather than one so each CI job's count means
+# something: a vault test skipping inside the Postgres job would be noise.
+addopts = "--strict-markers -m 'not live and not live_vault'"
 markers = [
     "live: needs a real Postgres, from ROTATOR_TEST_DSN. Skips when it is unset.",
+    "live_vault: needs a real Vault, from ROTATOR_TEST_VAULT_ADDR and _TOKEN. Skips when unset.",
 ]
 
 [tool.ruff]

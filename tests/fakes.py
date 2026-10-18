@@ -2,6 +2,11 @@
 
 None of this talks to anything. The Secrets Manager store is exercised against
 moto; Vault, the database and the clock are replaced by the objects below.
+
+Two of these are no longer trusted on their own word. `FakeDatabase` and
+`FakeVaultTransport` are each run through a contract suite that also runs
+against a real server, and every refusal in them that looks oddly specific is
+there because the two disagreed and the fake was the kinder one.
 """
 
 from __future__ import annotations
@@ -101,35 +106,53 @@ class FakeDatabase:
 
 class FakeVaultTransport:
     """KV v2, reduced to what the store uses: a document, a version, and
-    check and set."""
+    check and set.
 
-    def __init__(self) -> None:
+    Three of its behaviours are here because `test_secret_store_contract.py`
+    ran the same tests against this and against a real Vault. It used to
+    answer a request to a mount that does not exist as though the secret were
+    simply absent, and it had no way to be a version that had been soft
+    deleted, which is the state a 404 that still carries metadata describes.
+    Both were the fake being kinder than the server.
+
+    A soft deleted read answers 200 here and 404 on a real Vault. That is not
+    a third disagreement: `UrllibTransport` parses the body of that 404 and
+    hands the store the same envelope this returns, so the two are identical
+    at the only layer `VaultKvStore` can see.
+    """
+
+    def __init__(self, mounts: tuple[str, ...] = ("kv", "secret")) -> None:
         self.documents: dict[str, dict[str, Any]] = {}
         self.versions: dict[str, int] = {}
+        self.deleted: set[str] = set()
         self.writes = 0
-        # Set to simulate another writer landing between a read and the write
-        # that follows it, which is the only thing check and set defends.
-        self.race_next_read = False
+        self._mounts = frozenset(mounts)
 
     def seed(self, path: str, data: dict[str, Any]) -> None:
         self.documents[path] = dict(data)
         self.versions[path] = 1
 
+    def soft_delete(self, path: str) -> None:
+        """Delete the latest version and keep its number, which is what
+        `vault kv delete` does and what the next write has to send as cas."""
+        self.deleted.add(path)
+
     def request(self, method: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        mount = path.split("/", 1)[0]
+        if mount not in self._mounts:
+            # Vault answers a route it has no engine for with a 404 that names
+            # the route. Returning {} here, as this used to, made a typo in
+            # vault_mount read as a secret nobody had written yet.
+            raise StoreError(
+                f'vault {method} {path} returned 404: no handler for route "{path}". '
+                "route entry not found."
+            )
         key = path.replace("/data/", "/", 1)
         if method == "GET":
             if key not in self.documents:
                 return {}
-            response = {
-                "data": {
-                    "data": dict(self.documents[key]),
-                    "metadata": {"version": self.versions[key]},
-                }
-            }
-            if self.race_next_read:
-                self.race_next_read = False
-                self.versions[key] += 1
-            return response
+            document = None if key in self.deleted else dict(self.documents[key])
+            return {"data": {"data": document, "metadata": {"version": self.versions[key]}}}
         if method == "POST":
             assert body is not None
             cas = body.get("options", {}).get("cas")
@@ -140,9 +163,42 @@ class FakeVaultTransport:
                 )
             self.documents[key] = dict(body["data"])
             self.versions[key] = cas + 1
+            self.deleted.discard(key)
             self.writes += 1
             return {"data": {"version": self.versions[key]}}
         raise AssertionError(f"unexpected method {method}")
+
+
+class RacingTransport:
+    """A second rotator landing between a read and the write that follows it.
+
+    Wraps either transport and, once armed, lets the next GET through and then
+    writes the document itself before returning it. The store's write is then
+    one version behind, which is the only thing check and set defends against.
+
+    One mechanism for both backends on purpose. A fake that simulates the race
+    by incrementing a counter proves nothing about whether Vault refuses the
+    write; this drives a real concurrent write into whichever server is behind
+    it, and the 400 comes back from there.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self._armed = False
+
+    def arm(self) -> None:
+        self._armed = True
+
+    def request(self, method: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        response = self._inner.request(method, path, body)
+        if self._armed and method == "GET":
+            self._armed = False
+            payload = response.get("data") or {}
+            version = int((payload.get("metadata") or {}).get("version", 0))
+            document = dict(payload.get("data") or {})
+            document["raced"] = "written by another rotator"
+            self._inner.request("POST", path, {"data": document, "options": {"cas": version}})
+        return response
 
 
 class RecordingStore:

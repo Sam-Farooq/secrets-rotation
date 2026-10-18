@@ -2,6 +2,10 @@
 
 The transport is a dict with a version counter and the one behaviour that
 matters, check and set. Nothing was captured from a Vault server.
+
+The check and set race moved to tests/test_secret_store_contract.py, where it
+runs against this transport and against a real Vault from the same test. A
+race the fake stages for itself only ever proves the fake.
 """
 
 from __future__ import annotations
@@ -62,22 +66,6 @@ def test_promote_stamps_the_rotation_time_from_the_injected_clock(store, transpo
     store.promote(KEY)
 
     assert transport.documents[PATH]["rotated_at"] == START.isoformat()
-
-
-def test_a_writer_landing_between_the_read_and_the_write_is_rejected(store, transport):
-    """What check and set is for.
-
-    KV v2 has no staging labels, so staging a credential is read the document,
-    add a field, write it back. Two rotators doing that at once would have the
-    second overwrite the first. `options.cas` carries the version that was
-    read, so the second write is a 400 instead.
-    """
-    transport.race_next_read = True
-
-    with pytest.raises(StoreError, match="check-and-set"):
-        store.stage(KEY, NEW)
-
-    assert store.staged(KEY) is None
 
 
 def test_a_normal_write_carries_the_version_it_read(store, transport):

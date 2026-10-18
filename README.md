@@ -127,6 +127,11 @@ change in one write instead of one label moving. It is still atomic, because
 every write sends `options.cas` with the version it read, so a second rotator
 on the same path gets a 400 rather than overwriting the first one's work.
 
+That check and set is the whole guarantee, and it is worth knowing that it
+is the *engine* that provides it: a KV v1 mount accepts `options.cas` as
+ordinary data and ignores it. The store refuses a mount that does not answer
+like v2 rather than rotate against one.
+
 Vault is reached through `urllib`, not `hvac`. Two endpoints are used, both a
 GET and a POST of JSON. **What that gives up is hvac's retry and auth
 handling,** in exchange for one fewer dependency with its own release cadence.
@@ -236,13 +241,14 @@ Checking `log_statement` is still step seven of
 [`stopped-after-promote.md`](docs/runbooks/stopped-after-promote.md), because
 a server that logged plaintext before this change still has it in the log.
 
-Separately, `rotator/stores/vault.py` has never spoken to a Vault. It sits
-behind a `Protocol` in `rotator/ports.py` and is exercised against a hand
-written fake. The version number is pre-1.0 for that reason.
+Both adapters sat behind a `Protocol` in `rotator/ports.py` and were exercised
+only against hand written fakes: `rotator/database.py` until 0.14.0 and
+`rotator/stores/vault.py` until 0.15.0. Neither does now. Postgres 16 and
+Vault 2.1.2 each run in CI on every pull request, through the live tiers
+described under Tests.
 
-`rotator/database.py` was in the same position until 0.14.0 and is not any
-more: it runs against a real Postgres 16 in CI on every pull request, through
-the live tier described under Tests. Vault is the half that is left.
+The version is still pre-1.0, for a narrower reason than before: this has not
+rotated a credential anything depends on.
 
 ## Tests
 
@@ -255,7 +261,7 @@ python3.11 -m venv .venv
 .venv/bin/python scripts/render.py --check
 ```
 
-156 tests, no AWS account, no Vault, no database, no network, no compiler.
+169 tests, no AWS account, no Vault, no database, no network, no compiler.
 moto stubs Secrets Manager and IAM. Vault, Postgres and the clock are replaced
 by `tests/fakes.py`, which is hand written: nothing in this repo was captured
 or recorded from a running system.
@@ -292,6 +298,57 @@ any password, so every assertion about a wrong one being refused passes without
 checking anything. The helper reads `pg_hba_file_rules` and those tests skip
 with a reason rather than go green; CI sets `scram-sha-256` explicitly and
 fails the job if the server reports anything else.
+
+### The same again for Vault, and the three things it caught
+
+[`tests/test_secret_store_contract.py`](tests/test_secret_store_contract.py)
+runs one set of tests against `FakeVaultTransport` and against a Vault over
+HTTP. Marked `live_vault`, deselected by default:
+
+```bash
+docker compose -f docker-compose.test.yml up -d
+ROTATOR_TEST_VAULT_ADDR=http://127.0.0.1:58200 \
+  ROTATOR_TEST_VAULT_TOKEN=rotator-local \
+  .venv/bin/python -m pytest -m live_vault -q
+```
+
+Docker is not required. The tier reads an address out of the environment, and
+it was first run against `vault server -dev` from the released binary on a
+machine with no Docker on it at all.
+
+Three disagreements, and each one turned a misconfiguration into a different
+and wrong story:
+
+- **An unknown mount answers 404, the same status as a secret that is not
+  there.** The transport read both as absent, so a typo in `vault_mount`
+  produced a plan saying the target had never been rotated. The bodies differ
+  and are now read.
+- **A soft deleted version answers 404 and still carries its metadata.** That
+  metadata was thrown away, so the next write sent `cas: 0` against a path
+  whose version was two, and Vault refused it with "check-and-set parameter
+  did not match". A deleted secret was being reported as a concurrent
+  rotation.
+- **A KV v1 mount answers the same URLs and ignores `options.cas` entirely.**
+  The writes succeed, the version is never checked, and the guard the whole
+  two phase design rests on is simply absent. This is the Vault shaped
+  version of running the Postgres tier under `trust`: nothing fails, and
+  nothing is tested. The store now refuses a mount that does not answer like
+  KV v2, and CI asserts the mount's version before running the tier.
+
+[`tests/test_vault_live.py`](tests/test_vault_live.py) holds what only a
+server can answer. The one worth naming is an answer to a question this
+repository had been asking the wrong way round: **KV v2 has no leases.** A
+read comes back with an empty `lease_id`, a duration of zero and
+`renewable: false`, because a static secret is not a dynamic one. Nothing
+Vault does bounds how long a retired password keeps working. The only thing
+that does is how long a consumer caches it, which is what
+`consumer_cache_seconds` measures and what the quiesce window is derived
+from.
+
+**What the Vault tier does not prove.** It runs against one node, so a read
+immediately after a write sees it and there is no replication window to
+observe. A performance replica may lag; nothing here runs one, and no claim
+is made about it.
 
 The clock is injected rather than patched, which is why a target with an hour
 long quiesce window costs nothing to test and the test can still assert the

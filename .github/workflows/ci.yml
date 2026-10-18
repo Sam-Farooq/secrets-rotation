@@ -101,6 +101,55 @@ jobs:
           ROTATOR_TEST_DSN: postgresql://postgres:rotator-ci@localhost:5432/rotator_contract
         run: pytest -m live -q --tb=short -rs
 
+  # The store against a real Vault. Same arrangement as the Postgres job: the
+  # offline job proves the tool agrees with tests/fakes.py, this one proves
+  # tests/fakes.py agrees with Vault.
+  #
+  # `docker run` rather than a service container, because a service takes no
+  # command and this image needs `server -dev` to be one.
+  vault:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev]"
+
+      - name: a Vault to run against
+        run: |
+          docker run -d --name vault \
+            -p 8200:8200 --cap-add=IPC_LOCK \
+            -e VAULT_DEV_ROOT_TOKEN_ID=rotator-ci \
+            -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+            hashicorp/vault:2.1.2 server -dev
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8200/v1/sys/health >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8200/v1/sys/health
+
+      # A KV v1 mount answers the same URLs and ignores options.cas, so a tier
+      # pointed at one would skip itself and leave the job green. It fails
+      # here instead.
+      - name: the mount is KV v2
+        run: |
+          version=$(curl -sf -H "X-Vault-Token: rotator-ci" \
+            http://127.0.0.1:8200/v1/sys/mounts \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['secret/']['options']['version'])")
+          echo "secret/ kv version: $version"
+          test "$version" = "2"
+
+      - name: the live tier
+        env:
+          ROTATOR_TEST_VAULT_ADDR: http://127.0.0.1:8200
+          ROTATOR_TEST_VAULT_TOKEN: rotator-ci
+        run: pytest -m live_vault -q --tb=short -rs
+
   terraform:
     runs-on: ubuntu-latest
     defaults:
