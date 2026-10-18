@@ -52,7 +52,7 @@ def test_the_password_is_still_reachable_for_the_code_that_needs_it():
 
 def test_the_audit_of_a_successful_run_holds_no_password(config, secretsmanager, seeded_secret):
     audit = MemoryAudit()
-    database = FakeDatabase({"orders_app_a": "the-old-one"})
+    database = FakeDatabase({"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"})
 
     outcome = rotate(config, secretsmanager, database, audit)
 
@@ -64,7 +64,9 @@ def test_the_audit_of_a_successful_run_holds_no_password(config, secretsmanager,
 
 def test_the_audit_of_a_failed_run_holds_no_password(config, secretsmanager, seeded_secret):
     audit = MemoryAudit()
-    database = FakeDatabase({"orders_app_a": "the-old-one"}, reject=("orders_app_b",))
+    database = FakeDatabase(
+        {"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"}, reject=("orders_app_b",)
+    )
 
     rotate(config, secretsmanager, database, audit)
 
@@ -72,7 +74,10 @@ def test_the_audit_of_a_failed_run_holds_no_password(config, secretsmanager, see
 
 
 def test_the_outcome_summary_holds_no_password(config, secretsmanager, seeded_secret):
-    database = FakeDatabase({"orders_app_a": "the-old-one"}, fail_set=("orders_app_b",))
+    database = FakeDatabase(
+        {"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"},
+        fail_set=("orders_app_b",),
+    )
 
     outcome = rotate(config, secretsmanager, database, MemoryAudit())
 
@@ -85,7 +90,7 @@ def test_the_file_audit_appends_one_json_line_per_transition(
     config, secretsmanager, seeded_secret, tmp_path
 ):
     path = tmp_path / "nested" / "orders-db.audit.jsonl"
-    database = FakeDatabase({"orders_app_a": "the-old-one"})
+    database = FakeDatabase({"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"})
 
     outcome = rotate(config, secretsmanager, database, FileAudit(path))
 
@@ -100,7 +105,10 @@ def test_the_last_audit_line_names_the_state_the_runbooks_key_off(
     config, secretsmanager, seeded_secret, tmp_path
 ):
     path = tmp_path / "orders-db.audit.jsonl"
-    database = FakeDatabase({"orders_app_a": "the-old-one"}, fail_revoke=("orders_app_a",))
+    database = FakeDatabase(
+        {"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"},
+        fail_revoke=("orders_app_a",),
+    )
 
     rotate(config, secretsmanager, database, FileAudit(path))
 
@@ -112,7 +120,7 @@ def test_the_last_audit_line_names_the_state_the_runbooks_key_off(
 def test_the_audit_timestamp_comes_from_the_clock(config, secretsmanager, seeded_secret):
     audit = MemoryAudit()
     clock = FakeClock()
-    database = FakeDatabase({"orders_app_a": "the-old-one"})
+    database = FakeDatabase({"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"})
 
     rotate(config, secretsmanager, database, audit, clock)
 

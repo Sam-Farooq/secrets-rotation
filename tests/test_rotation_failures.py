@@ -33,7 +33,9 @@ def live_credential(client, secret_id):
 
 
 def test_a_failed_verification_revokes_nothing(config, secretsmanager, seeded_secret):
-    database = FakeDatabase({"orders_app_a": "the-old-one"}, reject=("orders_app_b",))
+    database = FakeDatabase(
+        {"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"}, reject=("orders_app_b",)
+    )
 
     outcome = run(config, secretsmanager, database)
 
@@ -51,7 +53,9 @@ def test_a_failed_verification_revokes_nothing(config, secretsmanager, seeded_se
 
 
 def test_a_failed_verification_leaves_nothing_staged(config, secretsmanager, seeded_secret):
-    database = FakeDatabase({"orders_app_a": "the-old-one"}, reject=("orders_app_b",))
+    database = FakeDatabase(
+        {"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"}, reject=("orders_app_b",)
+    )
     store = SecretsManagerStore(secretsmanager, allowed_secret_ids=config.secret_ids)
 
     Rotation(
@@ -68,7 +72,9 @@ def test_a_failed_verification_does_not_wait_out_the_quiesce_window(
     config, secretsmanager, seeded_secret
 ):
     clock = FakeClock()
-    database = FakeDatabase({"orders_app_a": "the-old-one"}, reject=("orders_app_b",))
+    database = FakeDatabase(
+        {"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"}, reject=("orders_app_b",)
+    )
 
     run(config, secretsmanager, database, clock=clock)
 
@@ -80,7 +86,9 @@ def test_a_failed_verification_does_not_wait_out_the_quiesce_window(
 
 def test_the_rollback_says_why_in_the_audit(config, secretsmanager, seeded_secret):
     audit = MemoryAudit()
-    database = FakeDatabase({"orders_app_a": "the-old-one"}, reject=("orders_app_b",))
+    database = FakeDatabase(
+        {"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"}, reject=("orders_app_b",)
+    )
 
     run(config, secretsmanager, database, audit=audit)
 
@@ -91,7 +99,10 @@ def test_the_rollback_says_why_in_the_audit(config, secretsmanager, seeded_secre
 
 
 def test_a_database_that_refuses_the_alter_role_rolls_back(config, secretsmanager, seeded_secret):
-    database = FakeDatabase({"orders_app_a": "the-old-one"}, fail_set=("orders_app_b",))
+    database = FakeDatabase(
+        {"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"},
+        fail_set=("orders_app_b",),
+    )
 
     outcome = run(config, secretsmanager, database)
 
@@ -107,7 +118,10 @@ def test_a_revoke_that_fails_is_abandoned_and_not_retried(config, secretsmanager
     Consumers are already resolving the new credential, so putting the old one
     back would be the outage. The run stops and says so.
     """
-    database = FakeDatabase({"orders_app_a": "the-old-one"}, fail_revoke=("orders_app_a",))
+    database = FakeDatabase(
+        {"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"},
+        fail_revoke=("orders_app_a",),
+    )
 
     outcome = run(config, secretsmanager, database)
 
@@ -122,7 +136,10 @@ def test_a_revoke_that_fails_is_abandoned_and_not_retried(config, secretsmanager
 
 
 def test_an_abandoned_run_does_not_discard_what_it_published(config, secretsmanager, seeded_secret):
-    database = FakeDatabase({"orders_app_a": "the-old-one"}, fail_revoke=("orders_app_a",))
+    database = FakeDatabase(
+        {"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"},
+        fail_revoke=("orders_app_a",),
+    )
     store = SecretsManagerStore(secretsmanager, allowed_secret_ids=config.secret_ids)
 
     Rotation(
@@ -141,7 +158,7 @@ def test_a_leftover_staged_credential_stops_the_next_run(config, secretsmanager,
     from rotator.ports import Credential
 
     store.stage(seeded_secret, Credential("orders_app_b", "half-finished"))
-    database = FakeDatabase({"orders_app_a": "the-old-one"})
+    database = FakeDatabase({"orders_app_a": "the-old-one", "orders_app_b": "the-standby-one"})
 
     outcome = run(config, secretsmanager, database)
 
