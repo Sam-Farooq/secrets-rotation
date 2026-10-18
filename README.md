@@ -205,17 +205,36 @@ person with a password manager, once a year.
 **`rotator rotate` refuses without `--confirm`.** The thing that invokes it is
 a scheduled task and the thing that reads its help is a person at 2am.
 
-## Known limitation, in the open
+## The password is not in the statement
 
-`ALTER ROLE ... WITH PASSWORD` sends the password in the statement text, so a
-server running `log_statement = 'ddl'` or `'all'` writes every password this
-tool sets into its own log, where it outlives the rotation that retired it.
+`ALTER ROLE ... WITH PASSWORD` sends whatever it is given in the statement
+text, so a server running `log_statement = 'ddl'` or `'all'` writes it to its
+own log, where it outlives the rotation that retired it. Postgres also accepts
+a pre-computed SCRAM verifier in that position, so that is what it is given:
+`rotator/scram.py` derives it here and the server never sees the plaintext.
 
-The fix is to compute a SCRAM-SHA-256 verifier on this side and send that.
-It is not here: the verifier has to match the server's `password_encryption`
-setting, and a mismatch produces a role that cannot log in, which is the
-failure this tool exists to prevent. Checking `log_statement` is step seven of
-[`stopped-after-promote.md`](docs/runbooks/stopped-after-promote.md) instead.
+A verifier in a log is not a credential. Authenticating needs ClientKey and the
+verifier carries SHA-256(ClientKey), which does not invert, so what leaks is an
+offline guess at a 48 character password from a 70 character alphabet.
+
+The part that took the work is not the derivation, it is matching the server. A
+verifier built against the wrong settings leaves a role that cannot log in,
+which is the outage this tool exists to prevent, so both settings are read from
+the server itself on the same connection as the ALTER:
+
+| Read | Why not from config |
+|---|---|
+| `password_encryption` | anything but `scram-sha-256` is a different format, so it refuses rather than writes something unusable |
+| `scram_iterations` | a server may be moved off 4096, and the wrong count will not authenticate |
+
+Both use `current_setting(..., true)`. `SHOW scram_iterations` raises on any
+server below 16, and a raise inside a transaction aborts it, so the ALTER that
+followed would fail with "current transaction is aborted" and send whoever is
+reading the alert looking in the wrong place.
+
+Checking `log_statement` is still step seven of
+[`stopped-after-promote.md`](docs/runbooks/stopped-after-promote.md), because
+a server that logged plaintext before this change still has it in the log.
 
 Separately, `rotator/database.py` has never run against a live Postgres, and
 `rotator/stores/vault.py` has never spoken to a Vault. Both sit behind

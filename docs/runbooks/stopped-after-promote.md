@@ -80,11 +80,23 @@ until there is a database to revoke it on. Note it and come back.
 
 ## Check `log_statement` while you are here
 
-`ALTER ROLE ... WITH PASSWORD` sends the password in the statement text. A
-server with `log_statement = 'ddl'` or `'all'` has written every password this
-tool has ever set into its own log. Confirm it is `'none'` or `'mod'`:
+Since 0.12.0 the ALTER carries a SCRAM verifier rather than the password, so
+what a verbose server logs from here on is useless to whoever reads it. That
+does not clean up what is already there. A server with `log_statement = 'ddl'`
+or `'all'` holds every password this tool set **before** that version, in
+clear. Confirm the setting:
 
     SHOW log_statement;
 
-If it is not, the rotation history is in the log and rotating again does not
-remove it.
+If it is `'ddl'` or `'all'` and this database was rotated by an earlier
+version, those passwords are in the log, and rotating again does not remove
+them. Rotate every role this tool manages, then have the log truncated.
+
+While you are here, the two settings the rotation now depends on:
+
+    SHOW password_encryption;   -- must be scram-sha-256
+    SHOW scram_iterations;      -- Postgres 16+, 4096 below that
+
+A rotation that stopped with "password_encryption is ... not 'scram-sha-256'"
+stopped before it altered anything, which means nothing is half-done: fix the
+server setting and run it again.

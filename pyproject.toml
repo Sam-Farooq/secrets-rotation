@@ -7,7 +7,7 @@ name = "secrets-rotation"
 # Pre-1.0 and staying there until this has rotated something real. The state
 # machine and the CLI contract are settled; the Postgres adapter has never run
 # against a live server and the Vault store has never spoken to a Vault.
-version = "0.11.0"
+version = "0.12.0"
 description = "Two phase credential rotation: verify the replacement, then revoke"
 requires-python = ">=3.11"
 dependencies = [
