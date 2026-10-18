@@ -1,10 +1,15 @@
 """The four boundaries this tool talks across, and the credential that moves
 over them.
 
-Everything that needs a network lives behind one of these. That is what makes
-the test suite offline: Secrets Manager is the only one with a real
-implementation under test, through moto, and it is the only one where the
-request shape is subtle enough to be worth checking against a server at all.
+Everything that needs a network lives behind one of these, which is what makes
+the default test suite offline: moto stubs Secrets Manager, and the database
+and Vault are replaced by `tests/fakes.py`.
+
+A fake is only worth what it is faithful to, so two of the three are also run
+against the real thing. `DatabaseAdmin` and `SecretStore` each have a contract
+suite that executes twice, once against the fake and once against Postgres or
+Vault, and both halves have to agree. Those tiers are deselected by default
+and run in CI.
 """
 
 from __future__ import annotations

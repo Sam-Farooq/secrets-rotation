@@ -1,8 +1,16 @@
-# A Postgres for the live test tier, for anyone without one already.
+# A Postgres and a Vault for the two live test tiers, for anyone without
+# them already.
 #
 #   docker compose -f docker-compose.test.yml up -d
 #   ROTATOR_TEST_DSN=postgresql://postgres:rotator-local@localhost:55432/rotator_contract \
 #     pytest -m live
+#   ROTATOR_TEST_VAULT_ADDR=http://127.0.0.1:58200 \
+#     ROTATOR_TEST_VAULT_TOKEN=rotator-local pytest -m live_vault
+#
+# Neither tier needs this file. Both read an address out of the
+# environment, so an existing server is reached by pointing at it, and the
+# Vault tier was first run against a `vault server -dev` from the released
+# binary rather than against this.
 #
 # Port 55432, not 5432, so this never collides with a Postgres already on the
 # machine. The password is in this file on purpose: it is a throwaway server
@@ -23,6 +31,28 @@ services:
       - "55432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Dev mode: in memory, unsealed, one known root token. Nothing here outlives
+  # the container, which is the point.
+  #
+  # Port 58200, not 8200, for the same reason as the Postgres one. IPC_LOCK is
+  # what lets Vault keep its memory out of swap; dev mode runs without it and
+  # says so in a warning on every start.
+  vault:
+    image: hashicorp/vault:2.1.2
+    command: server -dev
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: rotator-local
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "58200:8200"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8200/v1/sys/health"]
       interval: 5s
       timeout: 5s
       retries: 10
